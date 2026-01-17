@@ -48,19 +48,36 @@ app.use((req, res) => {
     res.status(404).json({ error: 'Route not found' });
 });
 
-// Start server
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📧 Email service: ${process.env.SMTP_HOST}`);
-    console.log(`🤖 AI service: ${process.env.GROQ_API_KEY ? 'Configured' : 'Not configured'}`);
+// CRON JOB ROUTE FOR VERCEL
+// Vercel will hit this endpoint externally
+app.get('/api/cron', async (req, res) => {
+    // Basic security check (Optional: check for specific header from Vercel)
+    console.log('⏰ Triggering manual birthday check via Cron Route...');
 
-    // Start the birthday scheduler
-    if (process.env.SCHEDULER_ENABLED !== 'false') {
-        startScheduler();
-        console.log('⏰ Birthday scheduler started');
-    } else {
-        console.log('⏰ Birthday scheduler disabled');
+    // Import the logic dynamically to ensure fresh run
+    const { checkBirthdays } = await import('./scheduler/birthdayScheduler.js');
+
+    try {
+        await checkBirthdays();
+        res.json({ message: 'Birthday check completed successfully' });
+    } catch (error) {
+        console.error('Error running cron:', error);
+        res.status(500).json({ error: error.message });
     }
 });
+
+// Start server (Only runs if NOT in Vercel environment or if running locally)
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+    app.listen(PORT, () => {
+        console.log(`🚀 Server running on http://localhost:${PORT}`);
+        console.log(`📧 Email service: ${process.env.SMTP_HOST}`);
+
+        // Start local node-cron only for local dev
+        if (process.env.SCHEDULER_ENABLED !== 'false') {
+            startScheduler();
+            console.log('⏰ Local Birthday scheduler started');
+        }
+    });
+}
 
 export default app;

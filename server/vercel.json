@@ -12,6 +12,12 @@
             "dest": "src/index.js"
         }
     ],
+    "crons": [
+        {
+            "path": "/api/cron",
+            "schedule": "0 9 * * *"
+        }
+    ],
     "env": {
         "NODE_ENV": "production"
     }
