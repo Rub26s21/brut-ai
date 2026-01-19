@@ -43,11 +43,6 @@ app.use((err, req, res, next) => {
     });
 });
 
-// 404 handler
-app.use((req, res) => {
-    res.status(404).json({ error: 'Route not found' });
-});
-
 // CRON JOB ROUTE FOR VERCEL
 // Vercel will hit this endpoint externally
 app.get('/api/cron', async (req, res) => {
@@ -55,15 +50,20 @@ app.get('/api/cron', async (req, res) => {
     console.log('⏰ Triggering manual birthday check via Cron Route...');
 
     // Import the logic dynamically to ensure fresh run
-    const { checkBirthdays } = await import('./scheduler/birthdayScheduler.js');
+    const { checkBirthdaysAndSend } = await import('./scheduler/birthdayScheduler.js');
 
     try {
-        await checkBirthdays();
+        await checkBirthdaysAndSend();
         res.json({ message: 'Birthday check completed successfully' });
     } catch (error) {
         console.error('Error running cron:', error);
         res.status(500).json({ error: error.message });
     }
+});
+
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({ error: 'Route not found' });
 });
 
 // Start server (Only runs if NOT in Vercel environment or if running locally)

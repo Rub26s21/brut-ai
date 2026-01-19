@@ -4,7 +4,7 @@
  */
 
 import cron from 'node-cron';
-import { supabase } from '../config/supabase.js';
+import { supabase, supabaseAdmin } from '../config/supabase.js';
 import { generateBirthdayMessage } from '../services/aiService.js';
 import { sendBirthdayEmail } from '../services/emailService.js';
 
@@ -14,48 +14,69 @@ import { sendBirthdayEmail } from '../services/emailService.js';
 async function checkBirthdaysAndSend() {
     console.log('🔍 Checking for birthdays today...');
 
+    // Use admin client if available to bypass RLS
+    const db = supabaseAdmin || supabase;
+    if (!supabaseAdmin) {
+        console.warn('⚠️  SERVICE_ROLE_KEY not configured. Scheduler may fail to see contacts due to RLS.');
+    }
+
     try {
         const today = new Date();
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-        const day = String(today.getDate()).padStart(2, '0');
+        // Use UTC for consistent matching regardless of server timezone
+        const month = String(today.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(today.getUTCDate()).padStart(2, '0');
 
-        // Get all contacts with birthdays today
-        // We need to check month and day separately since dob is stored as full date
-        const { data: allContacts, error: fetchError } = await supabase
+        console.log(`📅 Target birthday: ${month}-${day} (UTC)`);
+
+        // Get all contacts
+        // Note: Joining profiles might fail if no foreign key is defined in Supabase
+        // So we'll fetch contacts first and handle profiles later
+        const { data: allContacts, error: fetchError } = await db
             .from('contacts')
-            .select('*, profiles!inner(business_name)');
+            .select('*');
 
         if (fetchError) {
-            console.error('Error fetching contacts:', fetchError);
+            console.error('❌ Error fetching contacts:', fetchError);
+            return;
+        }
+
+        if (!allContacts || allContacts.length === 0) {
+            console.log('📭 No contacts found in database.');
             return;
         }
 
         // Filter contacts with birthday today
         const birthdayContacts = allContacts.filter(contact => {
+            if (!contact.dob) return false;
+
+            // Handle different date formats (YYYY-MM-DD or other)
             const dob = new Date(contact.dob);
-            const dobMonth = String(dob.getMonth() + 1).padStart(2, '0');
-            const dobDay = String(dob.getDate()).padStart(2, '0');
+            if (isNaN(dob.getTime())) return false;
+
+            const dobMonth = String(dob.getUTCMonth() + 1).padStart(2, '0');
+            const dobDay = String(dob.getUTCDate()).padStart(2, '0');
+
             return dobMonth === month && dobDay === day;
         });
 
-        console.log(`🎂 Found ${birthdayContacts.length} birthday(s) today`);
+        console.log(`🎂 Found ${birthdayContacts.length} birthday(s) today out of ${allContacts.length} total contacts`);
 
         // Process each birthday contact
         for (const contact of birthdayContacts) {
             try {
                 // Check if we already sent an email this year
-                const thisYear = today.getFullYear();
-                const yearStart = new Date(thisYear, 0, 1).toISOString();
-                const yearEnd = new Date(thisYear, 11, 31, 23, 59, 59).toISOString();
+                const thisYear = today.getUTCFullYear();
+                const yearStart = new Date(Date.UTC(thisYear, 0, 1)).toISOString();
+                const yearEnd = new Date(Date.UTC(thisYear, 11, 31, 23, 59, 59)).toISOString();
 
-                const { data: existingLog } = await supabase
+                const { data: existingLog } = await db
                     .from('email_logs')
                     .select('id')
                     .eq('contact_id', contact.id)
                     .gte('sent_at', yearStart)
                     .lte('sent_at', yearEnd)
                     .eq('status', 'sent')
-                    .single();
+                    .maybeSingle();
 
                 if (existingLog) {
                     console.log(`⏭️  Already sent birthday email to ${contact.name} this year`);
@@ -63,7 +84,14 @@ async function checkBirthdaysAndSend() {
                 }
 
                 // Get business name from profile
-                const businessName = contact.profiles?.business_name || 'Our Team';
+                // Fetch profile separately since we couldn't join easily
+                const { data: profile } = await db
+                    .from('profiles')
+                    .select('business_name')
+                    .eq('id', contact.user_id)
+                    .maybeSingle();
+
+                const businessName = profile?.business_name || 'Our Team';
 
                 // Generate AI message
                 console.log(`🤖 Generating message for ${contact.name}...`);
@@ -78,7 +106,7 @@ async function checkBirthdaysAndSend() {
                 await sendBirthdayEmail(contact.email, contact.name, message);
 
                 // Log success
-                await supabase.from('email_logs').insert({
+                await db.from('email_logs').insert({
                     contact_id: contact.id,
                     user_id: contact.user_id,
                     contact_name: contact.name,
@@ -93,7 +121,7 @@ async function checkBirthdaysAndSend() {
                 console.error(`❌ Failed to send email to ${contact.name}:`, error);
 
                 // Log failure
-                await supabase.from('email_logs').insert({
+                await db.from('email_logs').insert({
                     contact_id: contact.id,
                     user_id: contact.user_id,
                     contact_name: contact.name,

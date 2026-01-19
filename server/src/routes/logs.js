@@ -29,7 +29,21 @@ router.get('/', async (req, res) => {
         // Get query parameters for filtering
         const { limit = 50, status } = req.query;
 
-        let query = supabase
+        // Create an authenticated client to honor RLS
+        const { createClient } = await import('@supabase/supabase-js');
+        const userSupabase = createClient(
+            process.env.SUPABASE_URL,
+            process.env.SUPABASE_ANON_KEY,
+            {
+                global: {
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    }
+                }
+            }
+        );
+
+        let query = userSupabase
             .from('email_logs')
             .select('*')
             .eq('user_id', user.id)
@@ -70,15 +84,29 @@ router.get('/stats', async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
+        // Create an authenticated client to honor RLS
+        const { createClient } = await import('@supabase/supabase-js');
+        const userSupabase = createClient(
+            process.env.SUPABASE_URL,
+            process.env.SUPABASE_ANON_KEY,
+            {
+                global: {
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    }
+                }
+            }
+        );
+
         // Get total sent
-        const { count: totalSent } = await supabase
+        const { count: totalSent } = await userSupabase
             .from('email_logs')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', user.id)
             .eq('status', 'sent');
 
         // Get total failed
-        const { count: totalFailed } = await supabase
+        const { count: totalFailed } = await userSupabase
             .from('email_logs')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', user.id)
@@ -89,7 +117,7 @@ router.get('/stats', async (req, res) => {
         firstDayOfMonth.setDate(1);
         firstDayOfMonth.setHours(0, 0, 0, 0);
 
-        const { count: thisMonth } = await supabase
+        const { count: thisMonth } = await userSupabase
             .from('email_logs')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', user.id)
